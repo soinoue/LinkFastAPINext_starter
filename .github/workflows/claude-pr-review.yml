@@ -93,10 +93,10 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: "claude-3-haiku-20240307"
+          model: "claude-3-5-sonnet-20241022"
           trigger_phrase: "@claude"
           timeout_minutes: "30"
-          settings: '{"max_tokens": 3000}'
+          # settings: '{"max_tokens": 6000}'
           direct_prompt: |
             You are a helpful assistant that reviews code changes in a pull request for Mandom Tech0 Healthcare project.
             Review the code changes and provide feedback in Japanese, referencing @docs/dev/REVIEW.md.
