@@ -96,7 +96,10 @@ jobs:
           model: "claude-3-haiku-20240307"
           trigger_phrase: "@claude"
           timeout_minutes: "30"
-          settings: '{"max_tokens": 4000}'
+          settings: |
+            {
+              "max_tokens": 4000,
+            }
           direct_prompt: |
             You are a helpful assistant that reviews code changes in a pull request for Mandom Tech0 Healthcare project.
             Review the code changes and provide feedback in Japanese, referencing @docs/dev/REVIEW.md.
