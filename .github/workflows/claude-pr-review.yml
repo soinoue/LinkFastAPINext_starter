@@ -1,0 +1,106 @@
+name: Claude Code Action
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  claude-pr-review:
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.base.ref == 'develop')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files and latest commit
+        id: changed-files
+        run: |
+          # 最新のコミットハッシュを取得
+          LATEST_COMMIT=$(git rev-parse HEAD)
+
+          # 前回のコミットとの差分を取得
+          if [ "${{ github.event_name }}" == "synchronize" ]; then
+            # 新しいコミットと前のコミットの差分を取得
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            COMMIT_MESSAGE=$(git log -1 --pretty=format:"%s")
+          else
+            # PRが開かれた時は全ファイルを対象
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})
+            COMMIT_MESSAGE="Initial PR"
+          fi
+
+          # 変更されたファイルがない場合はスキップ
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "changed_files=" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "latest_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+            echo "commit_message<<EOF" >> $GITHUB_OUTPUT
+            echo "$COMMIT_MESSAGE" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if no changes
+        if: steps.changed-files.outputs.has_changes == 'false'
+        run: |
+          echo "No changes detected, skipping review"
+          exit 0
+
+      - name: Check if already reviewed
+        if: steps.changed-files.outputs.has_changes == 'true'
+        id: review-check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 最新のコミットが既にレビュー済みかチェック
+          LATEST_COMMIT="${{ steps.changed-files.outputs.latest_commit }}"
+
+          # PRのコメントを取得して、最新のコミットが既にレビュー済みかチェック
+          COMMENTS=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | .body' 2>/dev/null || echo "")
+
+          if echo "$COMMENTS" | grep -q "Commit: $LATEST_COMMIT"; then
+            echo "already_reviewed=true" >> $GITHUB_OUTPUT
+          else
+            echo "already_reviewed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if already reviewed
+        if: steps.changed-files.outputs.has_changes == 'true' && steps.review-check.outputs.already_reviewed == 'true'
+        run: |
+          echo "Latest commit already reviewed, skipping"
+          exit 0
+
+      - name: Claude API Code Review
+        if: steps.changed-files.outputs.has_changes == 'true' && steps.review-check.outputs.already_reviewed == 'false'
+        id: claude-review
+        uses: anthropics/claude-code-action@beta
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          model: "claude-3-haiku-20240307"
+          trigger_phrase: "@claude"
+          timeout_minutes: "30"
+          direct_prompt: |
+            You are a helpful assistant that reviews code changes in a pull request for Mandom Tech0 Healthcare project.
+            Review the code changes and provide feedback in Japanese, referencing @docs/dev/REVIEW.md.
+
+            Focus only on the changes in the latest commit(s) and avoid repeating previous review comments.
+            If the changes are minimal or cosmetic, provide a brief acknowledgment.
+
+            Always include the commit hash in your review comment for tracking purposes.
+            Format: "Commit: {commit_hash}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
